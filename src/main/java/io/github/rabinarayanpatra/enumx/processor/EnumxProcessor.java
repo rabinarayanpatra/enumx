@@ -57,6 +57,7 @@ public class EnumxProcessor extends AbstractProcessor {
     }
 
     private void generateController(TypeElement enumElement) throws IOException {
+        System.out.println("Generating controller for enum: " + enumElement.getQualifiedName());
         EnumApi enumApi = enumElement.getAnnotation(EnumApi.class);
         String packageName = getPackageName(enumElement);
         String enumSimpleName = enumElement.getSimpleName().toString();
