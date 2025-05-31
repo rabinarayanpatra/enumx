@@ -133,14 +133,13 @@ public class EnumxProcessor extends AbstractProcessor {
             String fieldName = field.getSimpleName().toString();
             String apiName = getApiName(field);
 
-            // Check if field has getter
+            // IMPORTANT FIX: For enum fields, we should ALWAYS assume a getter exists
+            // if the field is included. The getter check doesn't work properly for enums
+            // during annotation processing
             String getterName = getGetterName(field);
-            if (hasMethod(enumElement, getterName)) {
-                method.addStatement("item.put($S, value.$L())", apiName, getterName);
-            } else {
-                // Direct field access (if no getter)
-                method.addStatement("item.put($S, value.$L)", apiName, fieldName);
-            }
+
+            // Always use the getter for non-static fields in enums
+            method.addStatement("item.put($S, value.$L())", apiName, getterName);
         }
 
         method.addStatement("result.add(item)");
@@ -215,8 +214,13 @@ public class EnumxProcessor extends AbstractProcessor {
 
             VariableElement field = (VariableElement) enclosedElement;
 
-            // Skip static fields
+            // Skip static fields (like enum constants themselves)
             if (field.getModifiers().contains(Modifier.STATIC)) {
+                continue;
+            }
+
+            // Skip synthetic fields (like $VALUES)
+            if (field.getSimpleName().toString().startsWith("$")) {
                 continue;
             }
 
@@ -229,6 +233,7 @@ public class EnumxProcessor extends AbstractProcessor {
         return exposedFields;
     }
 
+
     private boolean shouldExposeField(VariableElement field, boolean includeAllFields) {
         if (field.getAnnotation(Hide.class) != null) {
             return false;
@@ -237,7 +242,7 @@ public class EnumxProcessor extends AbstractProcessor {
         if (field.getAnnotation(Expose.class) != null) {
             return true;
         }
-
+        // If includeAllFields is true, include all non-static, non-synthetic fields
         return includeAllFields;
     }
 
