@@ -32,6 +32,14 @@ jobs:
       - name: Run tests
         run: mvn -B --no-transfer-progress verify
 
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-report
+          path: target/site/jacoco/
+          if-no-files-found: warn
+
   release:
     name: Publish package
     needs: verify
@@ -107,3 +115,12 @@ jobs:
         run: |
           git push origin HEAD
           git push origin "v$NEW_VERSION"
+
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ env.NEW_VERSION }}
+          release_name: EnumX v${{ env.NEW_VERSION }}
+          body_path: CHANGELOG.md

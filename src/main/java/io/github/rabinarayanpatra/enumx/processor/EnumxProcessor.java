@@ -77,6 +77,7 @@ public class EnumxProcessor extends AbstractProcessor {
                 .addMethod(createGetAllMethod(enumElement, enumApi, exposedFields))
                 .addMethod(createValidateMethod(enumElement))
                 .addMethod(createMatchesFiltersMethod(enumElement, filterableFields))
+                .addMethod(createValidateFiltersMethod(filterableFields))
                 .build();
 
         JavaFile javaFile = JavaFile.builder(packageName + ".generated", controller)
@@ -114,8 +115,9 @@ public class EnumxProcessor extends AbstractProcessor {
                         .build())
                 .returns(returnType);
 
-        method.addStatement("$T<String, String> queryFilters = filters == null ? $T.emptyMap() : filters",
-                Map.class, Collections.class);
+        method.addStatement("$T<String, String> queryFilters = filters == null ? new $T<>() : new $T<>(filters)",
+                Map.class, LinkedHashMap.class, LinkedHashMap.class);
+        method.addStatement("validateFilters(queryFilters)");
         method.addStatement("$T<$T<String, Object>> result = new $T<>()",
                 List.class, Map.class, ArrayList.class);
 
@@ -176,6 +178,63 @@ public class EnumxProcessor extends AbstractProcessor {
                 .build();
     }
 
+    private MethodSpec createValidateFiltersMethod(List<FilterableField> filterableFields) {
+        ClassName responseStatusException = ClassName.get("org.springframework.web.server", "ResponseStatusException");
+        ClassName httpStatus = ClassName.get("org.springframework.http", "HttpStatus");
+
+        MethodSpec.Builder method = MethodSpec.methodBuilder("validateFilters")
+                .addModifiers(Modifier.PRIVATE)
+                .addParameter(ParameterizedTypeName.get(Map.class, String.class, String.class), "filters");
+
+        method.beginControlFlow("if (filters == null || filters.isEmpty())")
+                .addStatement("return")
+                .endControlFlow();
+
+        if (filterableFields.isEmpty()) {
+            method.addStatement("throw new $T($T.BAD_REQUEST, $S)",
+                    responseStatusException, httpStatus, "Filtering is not supported for this enum");
+            return method.build();
+        }
+
+        CodeBlock.Builder allowed = CodeBlock.builder();
+        for (int i = 0; i < filterableFields.size(); i++) {
+            if (i > 0) {
+                allowed.add(", ");
+            }
+            allowed.add("$S", filterableFields.get(i).filterName());
+        }
+
+        method.addStatement("$T<String> allowedFilters = $T.of($L)", Set.class, Set.class, allowed.build());
+
+        ParameterizedTypeName entryType = ParameterizedTypeName.get(ClassName.get(Map.Entry.class),
+                ClassName.get(String.class), ClassName.get(String.class));
+
+        method.beginControlFlow("for ($T entry : filters.entrySet())", entryType)
+                .addStatement("String filterName = entry.getKey()")
+                .beginControlFlow("if (filterName == null || filterName.isBlank())")
+                .addStatement("throw new $T($T.BAD_REQUEST, $S)",
+                        responseStatusException, httpStatus, "Filter name must not be blank")
+                .endControlFlow()
+                .beginControlFlow("if (!allowedFilters.contains(filterName))")
+                .addStatement("throw new $T($T.BAD_REQUEST, \"Unknown filter '\" + filterName + \"'\")",
+                        responseStatusException, httpStatus)
+                .endControlFlow()
+                .addStatement("String filterValue = entry.getValue()")
+                .beginControlFlow("if (filterValue == null)")
+                .addStatement("throw new $T($T.BAD_REQUEST, \"Filter '\" + filterName + \"' must include a value\")",
+                        responseStatusException, httpStatus)
+                .endControlFlow()
+                .addStatement("String trimmed = filterValue.trim()")
+                .beginControlFlow("if (trimmed.isEmpty())")
+                .addStatement("throw new $T($T.BAD_REQUEST, \"Filter '\" + filterName + \"' must include a value\")",
+                        responseStatusException, httpStatus)
+                .endControlFlow()
+                .addStatement("entry.setValue(trimmed)")
+                .endControlFlow();
+
+        return method.build();
+    }
+
     private MethodSpec createMatchesFiltersMethod(TypeElement enumElement, List<FilterableField> filterableFields) {
         ClassName enumClassName = ClassName.get(enumElement);
 
@@ -203,10 +262,6 @@ public class EnumxProcessor extends AbstractProcessor {
         method.addStatement("continue");
         method.endControlFlow();
         method.beginControlFlow("if (filterValue == null)");
-        method.addStatement("return false");
-        method.endControlFlow();
-        method.addStatement("filterValue = filterValue.trim()");
-        method.beginControlFlow("if (filterValue.isEmpty())");
         method.addStatement("return false");
         method.endControlFlow();
         method.beginControlFlow("switch (filterName)");

@@ -64,7 +64,7 @@ EnumX is a compile-time code generation toolkit that turns annotated Java enums 
 - Mark a field `@Filterable` to allow `GET /api/{path}?field=value`
 - Filter names default to the API field name (`@Expose` value if present) and can be overridden via `@Filterable("custom-name")`
 - Comparisons are type aware (boolean, numeric primitives, `BigDecimal`, `BigInteger`, and enum typed fields). Unsupported types fall back to string comparison.
-- Unknown filters result in no matches, helping clients spot typos quickly.
+- Unknown filters trigger a `400 Bad Request` error so clients discover typos early.
 
 ## Validation Endpoint
 
@@ -78,12 +78,36 @@ EnumX ships with auto-configuration registered via `META-INF/spring/org.springfr
 - All `@EnumApi` enums within your application base packages are registered at startup
 - A diagnostics controller surfaces metadata at `/enumx/metadata`
 
-No manual registration is required, but you can still inject `EnumRegistry` to inspect metadata or register enums programmatically if needed.
+Metadata exposure can be disabled per-environment with `enumx.metadata.enabled=false`. No manual registration is required, but you can still inject `EnumRegistry` to inspect metadata or register enums programmatically if needed.
+
+## Example Application
+
+Need a quick tour? Spin up the [Spring Boot demo](examples/spring-boot-demo/README.md):
+
+```bash
+mvn -q install          # build EnumX locally
+cd examples/spring-boot-demo
+mvn -q spring-boot:run -Denumx.version=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version -f ../../pom.xml)
+```
+
+It showcases generated controllers for two enums (`Priority` and `Region`) and the optional metadata endpoint.
+
+## Testing & Coverage
+
+- Run the library test suite and coverage checks with `mvn -q verify`.
+- JaCoCo enforces ≥90% instruction/branch coverage over the runtime core package (`io.github.rabinarayanpatra.enumx.core`). Current runs sit around 99% instruction / 90% branch coverage.
+- Coverage reports live under `target/site/jacoco/index.html` after `mvn verify`.
 
 ## Development
 
 - Build & test: `mvn clean verify`
 - Verify annotation processor output via the compile-testing suite under `src/test/java`
-- The `deploy.yml` GitHub Actions workflow (see `.github/workflows/deploy.yml`) runs tests, bumps the Maven version, and publishes to GitHub Packages once changes land on the protected main branch.
+- The `deploy.yml` GitHub Actions workflow (see `.github/workflows/deploy.yml`) runs tests, bumps the Maven version, publishes to GitHub Packages, and creates a GitHub Release for the new tag.
+
+## Known limitations / roadmap
+
+- Filter comparisons currently perform strict equality checks; richer semantics (ranges, case-insensitive matches, AND/OR combinations) are tracked for future releases.
+- Generated controllers run in-memory over enum constants—great for moderate enum sizes, but review the data exposed when enums encapsulate large trees.
+- Authentication/authorization is delegated to the host Spring application; secure the generated endpoints like any other controller.
 
 Contributions and issue reports are welcome!
