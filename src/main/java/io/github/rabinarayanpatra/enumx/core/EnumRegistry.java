@@ -7,6 +7,7 @@ import io.github.rabinarayanpatra.enumx.annotations.Hide;
 import org.springframework.stereotype.Component;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -46,35 +47,54 @@ public class EnumRegistry {
     private EnumMetadata buildMetadata(Class<? extends Enum<?>> enumClass, EnumApi annotation) {
         List<EnumFieldMetadata> exposedFields = new ArrayList<>();
         Map<String, EnumFieldMetadata> filterableFields = new HashMap<>();
-        
-        // Process all declared fields
+        Set<String> apiNames = new HashSet<>();
+        Set<String> filterNames = new HashSet<>();
+
         for (Field field : enumClass.getDeclaredFields()) {
-            // Skip synthetic fields (like $VALUES)
-            if (field.isSynthetic()) {
+            if (field.isSynthetic() || java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
                 continue;
             }
-            
-            // Skip static fields
-            if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
+
+            if (field.isAnnotationPresent(Hide.class)) {
                 continue;
             }
-            
-            // Check if field should be included
-            boolean shouldInclude = shouldIncludeField(field, annotation.includeAllFields());
-            if (!shouldInclude) {
+
+            boolean explicitlyIncluded = field.isAnnotationPresent(Expose.class)
+                    || field.isAnnotationPresent(Filterable.class);
+
+            Optional<Method> getter = findGetter(field);
+            if ((explicitlyIncluded || annotation.includeAllFields()) && getter.isEmpty()) {
+                throw new IllegalStateException(String.format(
+                        "Field %s.%s must declare an accessible getter to be exposed or filtered",
+                        enumClass.getName(), field.getName()));
+            }
+
+            if (!explicitlyIncluded && !annotation.includeAllFields()) {
                 continue;
             }
-            
-            // Build field metadata
+
+            if (getter.isEmpty()) {
+                continue;
+            }
+
             EnumFieldMetadata fieldMeta = buildFieldMetadata(field);
+            if (!apiNames.add(fieldMeta.getApiName())) {
+                throw new IllegalStateException(String.format(
+                        "Duplicate API field name '%s' detected for enum %s",
+                        fieldMeta.getApiName(), enumClass.getName()));
+            }
             exposedFields.add(fieldMeta);
-            
-            // Check if filterable
+
             if (fieldMeta.isFilterable()) {
+                if (!filterNames.add(fieldMeta.getFilterName())) {
+                    throw new IllegalStateException(String.format(
+                            "Duplicate filter name '%s' detected for enum %s",
+                            fieldMeta.getFilterName(), enumClass.getName()));
+                }
                 filterableFields.put(fieldMeta.getFilterName(), fieldMeta);
             }
         }
-        
+
         return EnumMetadata.builder()
                 .enumClass(enumClass)
                 .path(annotation.path())
@@ -84,42 +104,30 @@ public class EnumRegistry {
                 .filterableFields(filterableFields)
                 .build();
     }
-    
-    private boolean shouldIncludeField(Field field, boolean includeAllFields) {
-        // @Hide always wins
-        if (field.isAnnotationPresent(Hide.class)) {
-            return false;
-        }
-        
-        // @Expose always includes
-        if (field.isAnnotationPresent(Expose.class)) {
-            return true;
-        }
-        
-        // Otherwise, check includeAllFields and if field has getter
-        return includeAllFields && hasGetter(field);
-    }
-    
-    private boolean hasGetter(Field field) {
+
+    private Optional<Method> findGetter(Field field) {
+        Class<?> declaringClass = field.getDeclaringClass();
         String fieldName = field.getName();
-        String getterName = "get" + Character.toUpperCase(fieldName.charAt(0)) + fieldName.substring(1);
-        String booleanGetterName = "is" + Character.toUpperCase(fieldName.charAt(0)) + fieldName.substring(1);
-        
-        try {
-            field.getDeclaringClass().getMethod(getterName);
-            return true;
-        } catch (NoSuchMethodException e1) {
+        String capitalizedName = Character.toUpperCase(fieldName.charAt(0)) + fieldName.substring(1);
+
+        List<String> candidates = new ArrayList<>();
+        if (field.getType() == boolean.class || field.getType() == Boolean.class) {
+            if (fieldName.startsWith("is") && fieldName.length() > 2 &&
+                    Character.isUpperCase(fieldName.charAt(2))) {
+                candidates.add(fieldName);
+            }
+            candidates.add("is" + capitalizedName);
+        }
+        candidates.add("get" + capitalizedName);
+
+        for (String candidate : candidates) {
             try {
-                // For boolean fields, check isXxx() method
-                if (field.getType() == boolean.class || field.getType() == Boolean.class) {
-                    field.getDeclaringClass().getMethod(booleanGetterName);
-                    return true;
-                }
-            } catch (NoSuchMethodException e2) {
-                // No getter found
+                return Optional.of(declaringClass.getMethod(candidate));
+            } catch (NoSuchMethodException ignored) {
+                // Try next candidate
             }
         }
-        return false;
+        return Optional.empty();
     }
     
     private EnumFieldMetadata buildFieldMetadata(Field field) {

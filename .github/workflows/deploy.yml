@@ -36,24 +36,36 @@ jobs:
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
 
-      - name: Auto-increment patch version
+      - name: Determine next version
+        id: version
         run: |
           CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
           echo "Current version: $CURRENT_VERSION"
-          BASE_VERSION=$(echo $CURRENT_VERSION | cut -d. -f1,2)
-          PATCH_VERSION=$(echo $CURRENT_VERSION | cut -d. -f3)
+          BASE_VERSION=$(echo "$CURRENT_VERSION" | cut -d. -f1,2)
+          PATCH_VERSION=$(echo "$CURRENT_VERSION" | cut -d. -f3)
           NEW_PATCH=$((PATCH_VERSION + 1))
           NEW_VERSION="${BASE_VERSION}.${NEW_PATCH}"
-          echo "New version: $NEW_VERSION"
-          mvn versions:set -DnewVersion=$NEW_VERSION -DgenerateBackupPoms=false
-          git add pom.xml
-          git commit -m "🔖 Auto bump version to $NEW_VERSION"
-          git push
+          echo "Next version: $NEW_VERSION"
+          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_ENV"
+
+      - name: Update project version
+        run: mvn versions:set -DnewVersion=${{ steps.version.outputs.new_version }} -DgenerateBackupPoms=false
 
       - name: Build and Test
-        run: mvn clean test
+        run: mvn -B clean verify
+
+      - name: Commit and push version bump
+        run: |
+          if git diff --quiet; then
+            echo "No version changes detected; skipping commit"
+            exit 0
+          fi
+          git add pom.xml
+          git commit -m "chore: bump version to $NEW_VERSION"
+          git push
 
       - name: Deploy to GitHub Packages
-        run: mvn deploy --batch-mode
+        run: mvn -B deploy --batch-mode
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
