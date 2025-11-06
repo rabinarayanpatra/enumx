@@ -1,71 +1,109 @@
-name: Auto Deploy to GitHub Packages
+name: Release to GitHub Packages
 
 on:
   push:
     branches:
       - main
-      - master
-    paths-ignore:
-      - 'LICENSE.md'
-      - 'README.md'
-      - '*.md'
-      - 'docs/**'
-      - '.github/*.md'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
   packages: write
 
 jobs:
-  build-and-deploy:
+  verify:
+    name: Verify project
     runs-on: ubuntu-latest
-    
+
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'corretto'
+          distribution: corretto
           java-version: '21'
-          cache: 'maven'
+          cache: maven
 
-      - name: Set up Git identity
+      - name: Run tests
+        run: mvn -B --no-transfer-progress verify
+
+  release:
+    name: Publish package
+    needs: verify
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java with publishing credentials
+        uses: actions/setup-java@v4
+        with:
+          distribution: corretto
+          java-version: '21'
+          cache: maven
+          server-id: github
+          server-username: GITHUB_ACTOR
+          server-password: GITHUB_TOKEN
+
+      - name: Configure Git user
         run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
+          git config --global user.name "${GITHUB_ACTOR}"
+          git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
 
       - name: Determine next version
         id: version
         run: |
-          CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
-          echo "Current version: $CURRENT_VERSION"
-          BASE_VERSION=$(echo "$CURRENT_VERSION" | cut -d. -f1,2)
-          PATCH_VERSION=$(echo "$CURRENT_VERSION" | cut -d. -f3)
-          NEW_PATCH=$((PATCH_VERSION + 1))
-          NEW_VERSION="${BASE_VERSION}.${NEW_PATCH}"
-          echo "Next version: $NEW_VERSION"
-          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-          echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_ENV"
+          set -euo pipefail
+          CURRENT_VERSION=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)
+          echo "Current version: ${CURRENT_VERSION}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${CURRENT_VERSION}"
+          if [ -z "${PATCH}" ]; then
+            echo "::error::Unable to parse semantic version from ${CURRENT_VERSION}"
+            exit 1
+          fi
+          NEXT_PATCH=$((PATCH + 1))
+          NEW_VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}"
+          echo "new_version=${NEW_VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "NEW_VERSION=${NEW_VERSION}" >> "${GITHUB_ENV}"
 
       - name: Update project version
-        run: mvn versions:set -DnewVersion=${{ steps.version.outputs.new_version }} -DgenerateBackupPoms=false
+        run: |
+          mvn versions:set -DnewVersion=${{ steps.version.outputs.new_version }} -DgenerateBackupPoms=false
+          mvn versions:commit
 
-      - name: Build and Test
-        run: mvn -B clean verify
+      - name: Deploy to GitHub Packages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: mvn -B --no-transfer-progress deploy -DskipTests
 
-      - name: Commit and push version bump
+      - name: Commit release
         run: |
           if git diff --quiet; then
-            echo "No version changes detected; skipping commit"
+            echo "No version change detected; skipping commit"
             exit 0
           fi
           git add pom.xml
-          git commit -m "chore: bump version to $NEW_VERSION"
-          git push
+          git commit -m "chore: release $NEW_VERSION"
 
-      - name: Deploy to GitHub Packages
-        run: mvn -B deploy --batch-mode
+      - name: Tag release
+        run: |
+          if git rev-parse "v$NEW_VERSION" >/dev/null 2>&1; then
+            echo "Tag v$NEW_VERSION already exists; skipping"
+            exit 0
+          fi
+          git tag "v$NEW_VERSION"
+
+      - name: Push release commit and tag
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git push origin HEAD
+          git push origin "v$NEW_VERSION"
