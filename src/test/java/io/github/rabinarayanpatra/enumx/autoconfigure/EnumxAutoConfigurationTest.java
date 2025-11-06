@@ -17,7 +17,7 @@ class EnumxAutoConfigurationTest {
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withInitializer(context -> AutoConfigurationPackages.register(
                     (BeanDefinitionRegistry) context.getBeanFactory(),
-                    "io.github.rabinarayanpatra.enumx"))
+                    "io.github.rabinarayanpatra.enumx.autoconfigure.samples"))
             .withConfiguration(AutoConfigurations.of(EnumxAutoConfiguration.class));
 
     @Test
@@ -25,9 +25,9 @@ class EnumxAutoConfigurationTest {
         contextRunner.run(context -> {
             assertThat(context).hasSingleBean(EnumRegistry.class);
             EnumRegistry registry = context.getBean(EnumRegistry.class);
-            EnumMetadata metadata = registry.getByPath("simple-status");
+            EnumMetadata metadata = registry.getByPath("alpha-values");
             assertThat(metadata).isNotNull();
-            assertThat(metadata.getEnumClass().getSimpleName()).isEqualTo("SimpleStatus");
+            assertThat(metadata.getEnumClass().getSimpleName()).isEqualTo("AlphaEnum");
         });
     }
 
@@ -37,7 +37,7 @@ class EnumxAutoConfigurationTest {
             EnumxMetadataController controller = context.getBean(EnumxMetadataController.class);
             List<EnumxMetadataController.EnumMetadataView> all = controller.getAll();
             assertThat(all).isNotEmpty();
-            assertThat(all.stream().anyMatch(view -> view.path().equals("simple-status"))).isTrue();
+            assertThat(all.stream().anyMatch(view -> view.path().equals("alpha-values"))).isTrue();
         });
     }
 }

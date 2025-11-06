@@ -51,9 +51,9 @@ public class TestEnums {
 
     @EnumApi(path = "countries", keyField = "code")
     public enum Country {
-        UNITED_STATES("US", "United States"),
-        CANADA("CA", "Canada"),
-        UNITED_KINGDOM("GB", "United Kingdom");
+        UNITED_STATES("US", "United States", Region.AMERICAS),
+        CANADA("CA", "Canada", Region.AMERICAS),
+        UNITED_KINGDOM("GB", "United Kingdom", Region.EUROPE);
 
         @Expose
         private final String code;
@@ -62,9 +62,13 @@ public class TestEnums {
         @Filterable
         private final String name;
 
-        Country(String code, String name) {
+        @Filterable("region")
+        private final Region region;
+
+        Country(String code, String name, Region region) {
             this.code = code;
             this.name = name;
+            this.region = region;
         }
 
         public String getCode() {
@@ -73,6 +77,15 @@ public class TestEnums {
 
         public String getName() {
             return name;
+        }
+
+        public Region getRegion() {
+            return region;
+        }
+
+        public enum Region {
+            AMERICAS,
+            EUROPE
         }
     }
 }

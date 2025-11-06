@@ -6,6 +6,9 @@ import com.google.testing.compile.JavaFileObjects;
 import com.google.testing.compile.CompilationSubject;
 import io.github.rabinarayanpatra.enumx.processor.EnumxProcessor;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import javax.tools.JavaFileObject;
 import javax.tools.StandardLocation;
@@ -17,6 +20,11 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.hasSize;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * Tests for the EnumX annotation processor.
@@ -306,6 +314,24 @@ class EnumxProcessorTest {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> unknownResults = (List<Map<String, Object>>) getAll.invoke(controller, unknownFilter);
         assertThat(unknownResults).isEmpty();
+
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
+        mockMvc.perform(get("/api/products").param("available", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].key").value("LAPTOP"))
+                .andExpect(jsonPath("$[0].category").value("Electronics"));
+
+        mockMvc.perform(get("/api/products").param("unknown", "value"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(0)));
+
+        mockMvc.perform(post("/api/products/validate")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("[\"LAPTOP\", \"TABLET\"]"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.valid[0]").value("LAPTOP"))
+                .andExpect(jsonPath("$.invalid[0]").value("TABLET"));
     }
 
     @Test
