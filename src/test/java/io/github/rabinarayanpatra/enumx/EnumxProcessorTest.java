@@ -1,13 +1,22 @@
 package io.github.rabinarayanpatra.enumx;
+
 import com.google.testing.compile.Compilation;
 import com.google.testing.compile.Compiler;
 import com.google.testing.compile.JavaFileObjects;
+import com.google.testing.compile.CompilationSubject;
 import io.github.rabinarayanpatra.enumx.processor.EnumxProcessor;
 import org.junit.jupiter.api.Test;
 
 import javax.tools.JavaFileObject;
+import javax.tools.StandardLocation;
+import java.io.IOException;
+import java.io.InputStream;
+import java.lang.reflect.Method;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
-import static com.google.testing.compile.CompilationSubject.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Tests for the EnumX annotation processor.
@@ -34,8 +43,8 @@ class EnumxProcessorTest {
                 .withProcessors(new EnumxProcessor())
                 .compile(enumFile);
 
-        assertThat(compilation).succeeded();
-        assertThat(compilation)
+        CompilationSubject.assertThat(compilation).succeeded();
+        CompilationSubject.assertThat(compilation)
                 .generatedSourceFile("com.example.generated.StatusController");
     }
 
@@ -79,10 +88,10 @@ class EnumxProcessorTest {
                 .withProcessors(new EnumxProcessor())
                 .compile(enumFile);
 
-        assertThat(compilation).succeeded();
+        CompilationSubject.assertThat(compilation).succeeded();
 
         // Verify controller was generated
-        assertThat(compilation)
+        CompilationSubject.assertThat(compilation)
                 .generatedSourceFile("com.example.generated.RoleController");
 
         // Could add more specific assertions about the generated content
@@ -120,7 +129,7 @@ class EnumxProcessorTest {
                 .withProcessors(new EnumxProcessor())
                 .compile(enumFile);
 
-        assertThat(compilation).succeeded();
+        CompilationSubject.assertThat(compilation).succeeded();
     }
 
     @Test
@@ -165,7 +174,7 @@ class EnumxProcessorTest {
                 .withProcessors(new EnumxProcessor())
                 .compile(enumFile);
 
-        assertThat(compilation).succeeded();
+        CompilationSubject.assertThat(compilation).succeeded();
     }
 
     @Test
@@ -187,7 +196,169 @@ class EnumxProcessorTest {
                 .withProcessors(new EnumxProcessor())
                 .compile(classFile);
 
-        assertThat(compilation).failed();
-        assertThat(compilation).hadErrorContaining("@EnumApi can only be applied to enums");
+        CompilationSubject.assertThat(compilation).failed();
+        CompilationSubject.assertThat(compilation).hadErrorContaining("@EnumApi can only be applied to enums");
+    }
+
+    @Test
+    void testFilteringLogicApplied() throws Exception {
+        JavaFileObject enumFile = JavaFileObjects.forSourceString(
+                "com.example.Product",
+                """
+                package com.example;
+
+                import io.github.rabinarayanpatra.enumx.annotations.*;
+
+                @EnumApi(path = "products", includeAllFields = true)
+                public enum Product {
+                    LAPTOP("Electronics", true, 1299, new java.math.BigDecimal("1299.00")),
+                    BOOK("Education", false, 25, new java.math.BigDecimal("25.00"));
+
+                    @Expose
+                    @Filterable
+                    private final String category;
+
+                    @Filterable
+                    private final boolean available;
+
+                    @Filterable
+                    private final int price;
+
+                    @Filterable("msrp")
+                    private final java.math.BigDecimal listPrice;
+
+                    Product(String category, boolean available, int price, java.math.BigDecimal listPrice) {
+                        this.category = category;
+                        this.available = available;
+                        this.price = price;
+                        this.listPrice = listPrice;
+                    }
+
+                    public String getCategory() {
+                        return category;
+                    }
+
+                    public boolean isAvailable() {
+                        return available;
+                    }
+
+                    public int getPrice() {
+                        return price;
+                    }
+
+                    public java.math.BigDecimal getListPrice() {
+                        return listPrice;
+                    }
+                }
+                """
+        );
+
+        Compilation compilation = Compiler.javac()
+                .withProcessors(new EnumxProcessor())
+                .compile(enumFile);
+
+        CompilationSubject.assertThat(compilation).succeeded();
+
+        JavaFileObject controllerClassFile = compilation.generatedFile(
+                        StandardLocation.CLASS_OUTPUT,
+                        "com.example.generated",
+                        "ProductController.class")
+                .orElseThrow(() -> new IllegalStateException("Generated controller bytecode not found"));
+        JavaFileObject enumClassFile = compilation.generatedFile(
+                        StandardLocation.CLASS_OUTPUT,
+                        "com.example",
+                        "Product.class")
+                .orElseThrow(() -> new IllegalStateException("Compiled enum bytecode not found"));
+
+        InMemoryClassLoader loader = new InMemoryClassLoader(Map.of(
+                "com.example.generated.ProductController", readBytes(controllerClassFile),
+                "com.example.Product", readBytes(enumClassFile)
+        ));
+
+        Class<?> controllerClass = loader.loadClass("com.example.generated.ProductController");
+        Object controller = controllerClass.getConstructor().newInstance();
+        Method getAll = controllerClass.getMethod("getAll", Map.class);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> allResults = (List<Map<String, Object>>) getAll.invoke(controller, Map.of());
+        assertThat(allResults).hasSize(2);
+
+        Map<String, String> booleanFilter = Map.of("available", "true");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> availableResults = (List<Map<String, Object>>) getAll.invoke(controller, booleanFilter);
+        assertThat(availableResults).hasSize(1);
+        assertThat(availableResults.get(0).get("category")).isEqualTo("Electronics");
+
+        Map<String, String> intFilter = Map.of("price", "25");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> priceResults = (List<Map<String, Object>>) getAll.invoke(controller, intFilter);
+        assertThat(priceResults).hasSize(1);
+        assertThat(priceResults.get(0).get("price")).isEqualTo(25);
+
+        Map<String, String> bigDecimalFilter = Map.of("msrp", "1299.00");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> msrpResults = (List<Map<String, Object>>) getAll.invoke(controller, bigDecimalFilter);
+        assertThat(msrpResults).hasSize(1);
+        assertThat(msrpResults.get(0).get("category")).isEqualTo("Electronics");
+
+        Map<String, String> unknownFilter = new LinkedHashMap<>();
+        unknownFilter.put("unknown", "value");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> unknownResults = (List<Map<String, Object>>) getAll.invoke(controller, unknownFilter);
+        assertThat(unknownResults).isEmpty();
+    }
+
+    @Test
+    void testExposeFieldWithoutGetterFailsCompilation() {
+        JavaFileObject enumFile = JavaFileObjects.forSourceString(
+                "com.example.InvalidEnum",
+                """
+                package com.example;
+
+                import io.github.rabinarayanpatra.enumx.annotations.*;
+
+                @EnumApi(path = "invalid")
+                public enum InvalidEnum {
+                    SAMPLE;
+
+                    @Expose
+                    private final String label = "broken";
+                }
+                """
+        );
+
+        Compilation compilation = Compiler.javac()
+                .withProcessors(new EnumxProcessor())
+                .compile(enumFile);
+
+        CompilationSubject.assertThat(compilation).failed();
+        CompilationSubject.assertThat(compilation)
+                .hadErrorContaining("must declare an accessible getter")
+                .inFile(enumFile);
+    }
+
+    private static byte[] readBytes(JavaFileObject file) throws IOException {
+        try (InputStream inputStream = file.openInputStream()) {
+            return inputStream.readAllBytes();
+        }
+    }
+
+    private static final class InMemoryClassLoader extends ClassLoader {
+
+        private final Map<String, byte[]> definitions;
+
+        InMemoryClassLoader(Map<String, byte[]> definitions) {
+            super(EnumxProcessorTest.class.getClassLoader());
+            this.definitions = definitions;
+        }
+
+        @Override
+        protected Class<?> findClass(String name) throws ClassNotFoundException {
+            byte[] bytes = definitions.get(name);
+            if (bytes == null) {
+                return super.findClass(name);
+            }
+            return defineClass(name, bytes, 0, bytes.length);
+        }
     }
 }
