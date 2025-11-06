@@ -1,0 +1,13 @@
+spring:
+  main:
+    banner-mode: off
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+enumx:
+  metadata:
+    enabled: true

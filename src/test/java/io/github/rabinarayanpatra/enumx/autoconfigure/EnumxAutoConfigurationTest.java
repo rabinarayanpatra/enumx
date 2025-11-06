@@ -40,4 +40,10 @@ class EnumxAutoConfigurationTest {
             assertThat(all.stream().anyMatch(view -> view.path().equals("alpha-values"))).isTrue();
         });
     }
+
+    @Test
+    void metadataControllerCanBeDisabled() {
+        contextRunner.withPropertyValues("enumx.metadata.enabled=false")
+                .run(context -> assertThat(context).doesNotHaveBean(EnumxMetadataController.class));
+    }
 }
